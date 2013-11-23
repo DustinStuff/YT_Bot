@@ -1,6 +1,8 @@
 from pprint import pprint
 from time import sleep
 from datetime import timedelta
+from random import choice
+import re
 import logging
 import requests
 
@@ -8,7 +10,7 @@ user_pass_dict = { "user": "USER",
                 "passwd": "PASS", 
                 "api_type": "json" }
 headers = { "User-agent": "YT_Bot by /u/ME" }
-bot_signature = '[^^Bot ^^subreddit](http://www.reddit.com/r/YT_Bot/) ^^| [^^FAQ](http://www.reddit.com/r/YT_Bot/comments/1qtd52/hello_i_am_yt_bot/) ^^| ^^Still ^^in ^^testing ^^mode, ^^may ^^be ^^unstable.'
+bot_signature = '[Bot subreddit](http://www.reddit.com/r/YT_Bot/) | [FAQ](http://www.reddit.com/r/YT_Bot/comments/1qtd52/hello_i_am_yt_bot/) | '
 
 scrape_url = "http://www.reddit.com/comments.json?limit=100"
 
@@ -18,8 +20,35 @@ session.headers.update(headers)
 already_done = []
 YT_Bot_Comments = []
 
-def redditLogin(): # Returns user's modhash
+def formatComment(text):
+    comment_format = ""
+    comment_sort = ['Title:', 'Duration:','Views:', 'Author:', 'Rating:']
+    for i in comment_sort:
+        if text.get(i):
+            comment_format += '%s `%s`\n\n' % (i,text[i])
+    comment_format += makeSmallText(bot_signature + getRandomBotComment())
+    return(comment_format)
 
+def makeSmallText(text):
+    separate_text = tuple(text.split())
+    small_text = ""
+    for i in separate_text:
+        if i[0] == '[':
+            small_text += '[^^%s ' % i[1:]
+        else:
+            small_text += '^^%s ' % i
+    if small_text == "":
+        return None
+    return small_text
+
+def getRandomBotComment():
+    file = open('bot_comments.txt', "r")
+    read_file = file.read().split('\n')
+    get_string = choice(read_file)
+    file.close()
+    return get_string
+    
+def redditLogin(): # Returns user's modhash
     login_url = 'https://ssl.reddit.com/api/login'
     r = session.post(login_url, data=user_pass_dict)
     js = r.json()
@@ -52,12 +81,7 @@ def getFirstTwoPages(link):
 
 def postYTComment(fullname,text): # Returns id of posted comment
     try:
-        title = text['title']
-        duration = text['duration']
-        viewCount = text['viewCount']
-        author = text['author']
-        rating = text['rating']
-        comment_text = '**Title:** %s\n\n**Duration:** %s\n\n**Views:** %s\n\n**Author:** %s\n\n**Rating:** %s\n\n %s' % (title,duration,viewCount,author,rating,bot_signature)
+        comment_text = formatComment(text)
         comment_data = { 'api_type': 'json',
                         'text' : comment_text,
                         'thing_id' : fullname,
@@ -65,7 +89,6 @@ def postYTComment(fullname,text): # Returns id of posted comment
         post = session.post('http://www.reddit.com/api/comment', data = comment_data)
         js = post.json()
         if js['json']['errors'] != []:
-            pprint(js['json']['errors'])
             if js['json'].get('ratelimit'):
                 ratelimit = { 'error': 'ratelimit','ratelimit': int(js['json']['ratelimit']) }
                 return ratelimit
@@ -82,28 +105,26 @@ def postYTComment(fullname,text): # Returns id of posted comment
 # Gets youtube video ID from string.
 # Example: "[Hey, check out this video.](https://www.youtube.com/watch?v=H_pVkarLMb8)"
 # Would return "H_pVkarLMb8"
+# Will not return if there are more than one link in a string.
 def getVideoID(string):
-    video_id = ""
+    yt_count = re.finditer(r'(youtu\.be/)|(youtube\.com/watch)', string)
+    yt_tuple = tuple(yt_count)
+    if len(yt_tuple) > 1:
+        return None
+    video_id = None
     if 'youtube.com/watch' in string:
-        for i in range(len(string)):
-            if string[i:i+3] == "?v=":
-                id_start = i + 3
-                video_id = string[i+3:i+14]
-            if string[i:i+3] == "&v=":
-                    id_start = i + 3
-                    video_id = string[i+3:i+14]
+        search = re.search(r'(\?|&(amp;)?)v=([\w-]{11})', string)
+        if search:
+            video_id = search.group(3)
     if 'youtu.be/' in string:
-        for i in range(len(string)):
-            if string[i:i+9] == 'youtu.be/':
-                video_id = string[i+9:i+20]
-    #Useless error handling.
-    if len(video_id) == 0:
-        return 'Error'
+        search = re.search(r'youtu\.be/([\w-]{11})', string)
+        if search:
+            video_id = search.group(1)
     return(video_id)
 
 # Returns select video data from a valid video ID.
 # E.g., getVideoData('H_pVkarLMb8') should return:
-# {'rating': 5.0, 'viewCount': '449', 'author': 'IntelligentRogue', 'duration': '0:01:24', 'title': 'Kaden and Stephen singing Barbie Girl (better)'}
+# {'Title:': 'Kaden and Stephen singing Barbie Girl (better)', 'Duration:': '0:01:24', 'Rating:': '5.0', 'Author:': 'IntelligentRogue', 'Views:': '449'}
 def getVideoData(VideoID):
     try:
         video_data = {}
@@ -113,21 +134,21 @@ def getVideoData(VideoID):
         for i in js['entry']:
             if 'author' in i:
                 author = js['entry'][i][0]['name']['$t']
-                video_data['author'] = author
+                video_data['Author:'] = author
             if 'title' in i:
                 title = js['entry'][i]['$t']
-                video_data['title'] = title
+                video_data['Title:'] = title
             if 'yt$statistics' in i:
                 viewCount = js['entry']['yt$statistics']['viewCount']
                 viewCount = format(int(viewCount),',d')
-                video_data['viewCount'] = viewCount
+                video_data['Views:'] = viewCount
             if 'media$group' in i:
                 seconds = js['entry'][i]['yt$duration']['seconds']
                 seconds = str(timedelta(seconds=int(seconds)))
-                video_data['duration'] = seconds
+                video_data['Duration:'] = seconds
             if 'gd$rating' in i:
                 rating = js['entry'][i]['average']
-                video_data['rating'] = str(rating)
+                video_data['Rating:'] = str(round(rating,1)) + ' / 5.0'
         return(video_data)
     except(ValueError):
         return 'ValueError'
@@ -135,55 +156,57 @@ def getVideoData(VideoID):
         return 'ConnectionError'
 
 
+def check_keywords(c):
+    return 'youtube.com/watch' in c['body'] or 'youtu.be/' in c['body']
 
 
 def run_bot():
+    global already_done
+    global YT_Bot_Comments
+    print('Bot started!')
     while True:
+        print('Beginning search...')
         comments = getFirstTwoPages(scrape_url)
         for i in comments:
             c = i['data']
             if c['id'] in already_done:
-                print('Found a previous comment, or reached end of list! Breaking...')
+                print('Found a previous comment. Breaking...')
                 break
-            else:
-                already_done.append(c['id'])
-                # Shears the back off of the list already_done
-                # when it gets longer than 200 entries.
-                # Don't want it clogging up resources. ;)
-                for i in range(len(already_done)):
-                    if i >= 200:
-                        already_done.pop()
-            if 'youtube.com/watch' in c['body'] or 'youtu.be/' in c['body']:
-                print('Found video!')
-                reply_id = c['name']
-                video_id = getVideoID(c['body'])
-                if video_id == 'Error':
-                    print('error getting video ID - ' + c['body'])
+            already_done.append(c['id'])
+            # Shears the back 200 entries off of the list already_done
+            already_done = already_done[:200]
+                
+            if not check_keywords(c):
+                continue
+            print('Found video!')
+            reply_id = c['name']
+            video_id = getVideoID(c['body'])
+            
+            if video_id == None:
+                print('Error finding video ID/multiple vidoes in one post: ' + c['body'])
+                continue
+            video_data = getVideoData(video_id)
+            
+            if 'Title:' not in video_data:
+                print('Video looks broken! Passing... ' + c['body'])
+                continue
+            
+            if c['parent_id'] in YT_Bot_Comments:
+                print(c['author'] + ' has replied to YT_Bot with another video! Not doing anything...')
+                continue
+            make_comment = postYTComment(reply_id,video_data)
+            if 'error' in make_comment:
+                if make_comment.get('ratelimit'):
+                    print('ratelimit error for %i seconds!' % make_comment['ratelimit'])
                 else:
-                    video_data = getVideoData(video_id)
-                    if 'title' in video_data:
-                        if c['parent_id'] not in YT_Bot_Comments:
-                            make_comment = postYTComment(reply_id,video_data)
-                            print(make_comment)
-                            if 'error' in make_comment:
-                                if make_comment.get('ratelimit'):
-                                    print('ratelimit error! Sleeping for %i seconds...' % make_comment['ratelimit'])
-                                    sleep(make_comment['ratelimit'])
-                                else:
-                                    print('An error occured making the comment. Skipping... ' + str(make_comment))
-                            else:
-                                YT_Bot_Comments.append(make_comment)
-                                # Pops the back off the list if the comment list is more than 1000 comments.
-                                for i in range(len(YT_Bot_Comments)):
-                                    if i >= 1000:
-                                        YT_Bot_Comments.pop()
-                                print('Comment posted! Sleeping for 10 seconds...' + str(make_comment))
-                                sleep(10)
-                        else:
-                            print(c['author'] + ' has replied to YT_Bot with another video! Not doing anything...')
-                    else:
-                        print('Video looks broken! Passing... ' + c['body'])
-        print('Reached end of list. Sleeping 30 seconds...')
+                    print('An error occured making the comment. Skipping... ' + str(make_comment))
+                continue
+            YT_Bot_Comments.append(make_comment)
+            # Pops the back off the list if the comment list is more than 1000 comments.
+            YT_Bot_Comments = YT_Bot_Comments[:1000]
+            print('Comment posted! Sleeping for 3 seconds...' + str(make_comment))
+            sleep(3)
+        print('Reached end of list. Sleeping for 30 seconds.')
         sleep(30)
 
 def bot_start():
