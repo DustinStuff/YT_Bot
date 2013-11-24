@@ -22,21 +22,31 @@ YT_Bot_Comments = []
 
 def formatComment(text):
     comment_format = ""
-    comment_sort = ['Title:', 'Duration:','Views:', 'Author:', 'Rating:']
+    comment_sort = ['Title:','Views:', 'Rating:', 'Duration:', 'Author:']
     for i in comment_sort:
-        if text.get(i):
-            comment_format += '%s `%s`\n\n' % (i,text[i])
-    comment_format += makeSmallText(bot_signature + getRandomBotComment())
+        if not text.get(i):
+            continue
+        if i == 'Title:':
+            comment_format += '**%s** *[%s](http://youtu.be/%s)* \n\n' % (i,text[i],text['VideoID'])
+        if i == 'Views:':
+            comment_format += makeSmallText('**%s** *%s* ',1) % (i,text[i])
+        if i == 'Rating:':
+            comment_format += makeSmallText(text[i],1)
+        if i == 'Duration:':
+            comment_format += makeSmallText('| **%s** %s',1) % (i,text[i])
+        
+    comment_format += '\n\n' + makeSmallText(bot_signature + getRandomBotComment())
     return(comment_format)
 
-def makeSmallText(text):
+def makeSmallText(text,size=2):
     separate_text = tuple(text.split())
     small_text = ""
+    text_size = '^' * size
     for i in separate_text:
         if i[0] == '[':
-            small_text += '[^^%s ' % i[1:]
+            small_text += '[%s%s ' % (text_size,i[1:])
         else:
-            small_text += '^^%s ' % i
+            small_text += '%s%s ' % (text_size,i)
     if small_text == "":
         return None
     return small_text
@@ -127,7 +137,7 @@ def getVideoID(string):
 # {'Title:': 'Kaden and Stephen singing Barbie Girl (better)', 'Duration:': '0:01:24', 'Rating:': '5.0', 'Author:': 'IntelligentRogue', 'Views:': '449'}
 def getVideoData(VideoID):
     try:
-        video_data = {}
+        video_data = { 'VideoID': VideoID }
         url = 'https://gdata.youtube.com/feeds/api/videos/' + VideoID + '?v=2&alt=json'
         r = requests.get(url)
         js = r.json()
@@ -146,9 +156,12 @@ def getVideoData(VideoID):
                 seconds = js['entry'][i]['yt$duration']['seconds']
                 seconds = str(timedelta(seconds=int(seconds)))
                 video_data['Duration:'] = seconds
-            if 'gd$rating' in i:
-                rating = js['entry'][i]['average']
-                video_data['Rating:'] = str(round(rating,1)) + ' / 5.0'
+            if 'yt$rating' in i:
+                likes = js['entry'][i]['numLikes']
+                likes = format(int(likes),',d')
+                dislikes = js['entry'][i]['numDislikes']
+                dislikes = format(int(dislikes),',d')
+                video_data['Rating:'] = '\(%s likes/%s dislikes)' % (likes,dislikes)
         return(video_data)
     except(ValueError):
         return 'ValueError'
@@ -165,34 +178,41 @@ def run_bot():
     global YT_Bot_Comments
     print('Bot started!')
     while True:
-        print('Beginning search...')
         comments = getFirstTwoPages(scrape_url)
         for i in comments:
             c = i['data']
             if c['id'] in already_done:
                 print('Found a previous comment. Breaking...')
                 break
-            already_done.append(c['id'])
-            # Shears the back 200 entries off of the list already_done
-            already_done = already_done[:200]
                 
+            # Puts the comment into a list, sorts the list oldest to newest,
+            # and then reverses it to newest to oldest.
+            # If this isn't here, bad things happen.
+            already_done.append(c['id'])
+            already_done.sort()
+            already_done.reverse()
+            # Shears the oldest comments off if it gets to be bigger than 300 entries.
+            already_done = already_done[:300]
             if not check_keywords(c):
                 continue
+            
             print('Found video!')
             reply_id = c['name']
             video_id = getVideoID(c['body'])
-            
             if video_id == None:
                 print('Error finding video ID/multiple vidoes in one post: ' + c['body'])
                 continue
+                
             video_data = getVideoData(video_id)
-            
             if 'Title:' not in video_data:
                 print('Video looks broken! Passing... ' + c['body'])
                 continue
             
             if c['parent_id'] in YT_Bot_Comments:
                 print(c['author'] + ' has replied to YT_Bot with another video! Not doing anything...')
+                continue
+            if c['author'] == 'YT_Bot':
+                print('Found myself! I\'m retarded! Skipping...')
                 continue
             make_comment = postYTComment(reply_id,video_data)
             if 'error' in make_comment:
@@ -204,9 +224,10 @@ def run_bot():
             YT_Bot_Comments.append(make_comment)
             # Pops the back off the list if the comment list is more than 1000 comments.
             YT_Bot_Comments = YT_Bot_Comments[:1000]
-            print('Comment posted! Sleeping for 3 seconds...' + str(make_comment))
+            print('Comment posted! Sleeping for 3 seconds...') #+ str(make_comment))
             sleep(3)
         print('Reached end of list. Sleeping for 30 seconds.')
+        #break #Uncomment for testing... Will only run through one iteration.
         sleep(30)
 
 def bot_start():
